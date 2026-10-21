@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Medical Exam OCR → Searchable PDF</title>
+  <meta name="description" content="Turn exam-question images and scanned PDFs into selectable, searchable text PDFs using OCR in your browser.">
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#5d687b; --line:#dce2ea; --panel:#fff; --bg:#f4f6fa; --accent:#1e40af; }
+    * { box-sizing:border-box }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Noto Sans Bengali","Noto Sans",Arial,sans-serif }
+    header { background:#102044; color:white; padding:24px 16px }
+    header .wrap, main { max-width:960px; margin:auto }
+    h1 { margin:0 0 6px; font-size:clamp(1.45rem,4vw,2.1rem); line-height:1.2 }
+    header p { margin:0; color:#dbe5ff }
+    main { padding:20px 14px 40px }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; box-shadow:0 2px 10px #14213d08 }
+    h2 { margin:0 0 12px; font-size:1.1rem }
+    label { display:block; font-weight:650; margin:10px 0 6px }
+    input[type=file], select, button { font:inherit }
+    input[type=file], select { width:100%; padding:11px; border:1px solid #c8d1df; border-radius:9px; background:white }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+    button { border:0; border-radius:9px; padding:11px 15px; cursor:pointer; font-weight:700 }
+    button:disabled { opacity:.5; cursor:not-allowed }
+    .primary { color:white; background:var(--accent) }
+    .secondary { color:var(--ink); background:#e8edf5 }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px }
+    .hint { color:var(--muted); font-size:.92rem }
+    .status { padding:10px 12px; border-radius:8px; background:#eef3ff; color:#1e3a8a; white-space:pre-wrap; margin-top:12px }
+    progress { width:100%; height:12px; margin-top:10px }
+    textarea { display:block; width:100%; min-height:320px; padding:12px; border:1px solid #c8d1df; border-radius:9px; resize:vertical; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace }
+    .warning { border-left:4px solid #d97706; padding:10px 12px; background:#fff7ed; color:#7c2d12; border-radius:6px }
+    footer { color:var(--muted); text-align:center; font-size:.86rem; padding:8px 16px 28px }
+    @media(max-width:650px){ .grid{grid-template-columns:1fr} .panel{padding:14px} }
+  </style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Medical Exam OCR</h1>
+  <p>Convert question-paper photos and scanned PDFs into searchable, copyable text PDFs.</p>
+</div></header>
+<main>
+  <section class="panel">
+    <h2>1. Choose your exam pages</h2>
+    <label for="files">Images or scanned PDF (you can select multiple files)</label>
+    <input id="files" type="file" accept="image/*,.pdf,application/pdf" multiple>
+    <div class="grid">
+      <div>
+        <label for="language">OCR language</label>
+        <select id="language">
+          <option value="eng">English</option>
+          <option value="eng+ben">English + Bangla</option>
+          <option value="ben">Bangla</option>
+        </select>
+      </div>
+      <div>
+        <label for="dpi">PDF page rendering quality</label>
+        <select id="dpi">
+          <option value="1.5">Standard (faster)</option>
+          <option value="2" selected>High (recommended)</option>
+          <option value="2.5">Very high (slower)</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint">For best results, use straight, sharp, well-lit images. English medical terminology usually works best with “English”; choose “English + Bangla” for mixed-language papers.</p>
+    <div class="actions">
+      <button class="primary" id="run">Run OCR</button>
+      <button class="secondary" id="clear" type="button">Clear</button>
+    </div>
+    <progress id="progress" max="100" value="0" hidden></progress>
+    <div id="status" class="status" role="status">Ready. Your files are processed in this browser; they are not uploaded to a server by this app.</div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Review and correct the OCR text</h2>
+    <p class="hint">OCR can confuse similar characters, question numbers, columns, tables, and symbols. Check every page against the original before exporting—especially answer options and medical notation.</p>
+    <textarea id="output" spellcheck="false" placeholder="Extracted text will appear here. You can correct it before creating the PDF."></textarea>
+    <div class="actions">
+      <button class="primary" id="pdf" disabled>Download searchable PDF</button>
+      <button class="secondary" id="txt" disabled>Download TXT</button>
+      <button class="secondary" id="copy" disabled>Copy text</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Important accuracy note</h2>
+    <div class="warning">This tool produces a text-based PDF from OCR; it does not guarantee a perfect facsimile of the original page design. Complex tables, two-column questions, diagrams, handwritten notes, subscripts/superscripts, Greek letters, and mathematical symbols may need manual correction. The PDF is selectable/searchable because it is rebuilt from recognized text, not because the original page image is embedded.</div>
+  </section>
+</main>
+<footer>Free static web app · GitHub Pages compatible · OCR runs locally in your browser</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const filesInput = $('files'), output = $('output'), status = $('status'), progress = $('progress');
+  const runBtn = $('run'), pdfBtn = $('pdf'), txtBtn = $('txt'), copyBtn = $('copy');
+  let hasText = false;
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  function setStatus(message) { status.textContent = message; }
+  function setText(text) {
+    output.value = text;
+    hasText = !!text.trim();
+    pdfBtn.disabled = txtBtn.disabled = copyBtn.disabled = !hasText;
+  }
+  function fileToDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  async function imageFromPdfPage(page, scale) {
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas;
+  }
+  async function runOCR() {
+    const files = [...filesInput.files];
+    if (!files.length) { setStatus('Please choose at least one image or PDF.'); return; }
+    runBtn.disabled = true; progress.hidden = false; progress.value = 0;
+    let chunks = [];
+    let totalPages = 0, completed = 0;
+    try {
+      // First determine page count so progress is meaningful.
+      const jobs = [];
+      for (const file of files) {
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          const data = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data }).promise;
+          for (let p = 1; p <= pdf.numPages; p++) jobs.push({ type:'pdf', pdf, page:p, name:file.name });
+        } else if (file.type.startsWith('image/')) {
+          jobs.push({ type:'image', file, name:file.name });
+        }
+      }
+      totalPages = jobs.length;
+      if (!totalPages) throw new Error('No supported image or PDF files were selected.');
+      const worker = await Tesseract.createWorker($('language').value, 1, {
+        logger: m => {
+          if (m.status) setStatus(`OCR: ${m.status}${m.progress != null ? ' (' + Math.round(m.progress*100) + '%)' : ''}\nPage ${completed + 1} of ${totalPages}`);
+        }
+      });
+      for (const job of jobs) {
+        let source;
+        if (job.type === 'pdf') {
+          const page = await job.pdf.getPage(job.page);
+          source = await imageFromPdfPage(page, Number($('dpi').value));
+        } else {
+          source = await fileToDataURL(job.file);
+        }
+        const result = await worker.recognize(source);
+        const pageText = (result.data.text || '').trim();
+        chunks.push(`===== ${job.name}${job.type === 'pdf' ? ' — page ' + job.page : ''} =====\n${pageText || '[unclear]'}`);
+        completed++;
+        progress.value = Math.round(completed / totalPages * 100);
+        setStatus(`Processed ${completed} of ${totalPages} page(s).`);
+      }
+      await worker.terminate();
+      setText(chunks.join('\n\n\n'));
+      setStatus(`OCR finished: ${completed} page(s). Review and correct the text before exporting.`);
+    } catch (err) {
+      console.error(err);
+      setStatus('Could not finish OCR: ' + (err && err.message ? err.message : String(err)) + '\nCheck your internet connection (OCR language data and libraries load from CDNs) and try again.');
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function safeFilename() {
+    const first = filesInput.files[0]?.name || 'exam-questions';
+    return first.replace(/\.[^.]+$/, '').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'exam-questions';
+  }
+  function exportPDF() {
+    const text = output.value.trim();
+    if (!text) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit:'mm', format:'a4', compress:true });
+    const margin = 18, maxY = 279, width = 210 - margin * 2;
+    const lineHeight = 5.3;
+    let y = 20;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    // jsPDF's built-in fonts do not support Bangla. Warn rather than silently promising it.
+    const isBangla = /[\u0980-\u09FF]/.test(text);
+    if (isBangla) {
+      alert('Bangla text detected. jsPDF built-in fonts may not render Bangla correctly. For a reliable Bangla PDF, embed a Unicode Bengali TTF font in this project before exporting. English-only output is supported by the built-in font.');
+    }
+    const paragraphs = text.split(/\r?\n/);
+    for (const rawLine of paragraphs) {
+      if (rawLine.startsWith('=====') && rawLine.endsWith('=====')) {
+        if (y > maxY - 12) { doc.addPage(); y = 20; }
+        y += 2; doc.setFont('helvetica','bold'); doc.setFontSize(11);
+        const titleLines = doc.splitTextToSize(rawLine.replace(/^=+|=+$/g,'').trim(), width);
+        doc.text(titleLines, margin, y); y += titleLines.length * 5.5 + 2;
+        doc.setFont('helvetica','normal'); doc.setFontSize(10);
+        continue;
+      }
+      const lines = rawLine === '' ? [''] : doc.splitTextToSize(rawLine, width);
+      for (const line of lines) {
+        if (y > maxY) { doc.addPage(); y = 20; }
+        if (line) doc.text(line, margin, y);
+        y += lineHeight;
+      }
+    }
+    const pages = doc.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p); doc.setFontSize(8); doc.setTextColor(100);
+      doc.text('OCR text — verify against original', margin, 289);
+      doc.text(`${p} / ${pages}`, 192, 289, { align:'right' });
+    }
+    doc.save(safeFilename() + '-searchable.pdf');
+  }
+  function exportTXT() {
+    downloadBlob(new Blob([output.value], {type:'text/plain;charset=utf-8'}), safeFilename() + '-ocr.txt');
+  }
+
+  runBtn.addEventListener('click', runOCR);
+  $('clear').addEventListener('click', () => {
+    filesInput.value = ''; setText(''); progress.value = 0; progress.hidden = true;
+    setStatus('Ready. Choose your images or scanned PDF.');
+  });
+  pdfBtn.addEventListener('click', exportPDF);
+  txtBtn.addEventListener('click', exportTXT);
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(output.value); setStatus('Text copied to clipboard.'); }
+    catch { output.select(); document.execCommand('copy'); setStatus('Text selected/copied where supported.'); }
+  });
+  output.addEventListener('input', () => {
+    hasText = !!output.value.trim();
+    pdfBtn.disabled = txtBtn.disabled = copyBtn.disabled = !hasText;
+  });
+})();
+</script>
+</body>
+</html>
